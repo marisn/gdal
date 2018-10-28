@@ -384,6 +384,8 @@ int SENTINEL2Dataset::Identify( GDALOpenInfo *poOpenInfo )
     /* Accept directly .zip as provided by https://scihub.esa.int/ */
     if( (STARTS_WITH_CI(pszJustFilename, "S2A_MSIL1C_") ||
          STARTS_WITH_CI(pszJustFilename, "S2B_MSIL1C_") ||
+         STARTS_WITH_CI(pszJustFilename, "S2A_MSIL2A_") ||
+         STARTS_WITH_CI(pszJustFilename, "S2B_MSIL2A_") ||
          STARTS_WITH_CI(pszJustFilename, "S2A_OPER_PRD_MSI") ||
          STARTS_WITH_CI(pszJustFilename, "S2B_OPER_PRD_MSI") ||
          STARTS_WITH_CI(pszJustFilename, "S2A_USER_PRD_MSI") ||
@@ -494,11 +496,30 @@ GDALDataset *SENTINEL2Dataset::Open( GDALOpenInfo * poOpenInfo )
         CPLString osFilename(poOpenInfo->pszFilename);
         CPLString osSAFE(osBasename);
         // S2B_MSIL1C_20171004T233419_N0206_R001_T54DWM_20171005T001811.SAFE.zip
-        // has .SAFE.zip extension, but other products have just a .zip 
+        // has .SAFE.zip extension, but other products have just a .zip
         // extension. So for the subdir in the zip only add .SAFE when needed
         if( !EQUAL(CPLGetExtension(osSAFE), "SAFE") )
             osSAFE += ".SAFE";
         osFilename = osFilename + "/" + osSAFE + "/MTD_MSIL1C.xml";
+        if( strncmp(osFilename, "/vsizip/", strlen("/vsizip/")) != 0 )
+            osFilename = "/vsizip/" + osFilename;
+        CPLDebug("SENTINEL2", "Trying %s", osFilename.c_str());
+        GDALOpenInfo oOpenInfo(osFilename, GA_ReadOnly);
+        return Open(&oOpenInfo);
+    }
+    else if( (STARTS_WITH_CI(pszJustFilename, "S2A_MSIL2A_") ||
+              STARTS_WITH_CI(pszJustFilename, "S2B_MSIL2A_") ) &&
+         EQUAL(CPLGetExtension(pszJustFilename), "zip") )
+    {
+        CPLString osBasename(CPLGetBasename(pszJustFilename));
+        CPLString osFilename(poOpenInfo->pszFilename);
+        CPLString osSAFE(osBasename);
+        // S2B_MSIL1C_20171004T233419_N0206_R001_T54DWM_20171005T001811.SAFE.zip
+        // has .SAFE.zip extension, but other products have just a .zip
+        // extension. So for the subdir in the zip only add .SAFE when needed
+        if( !EQUAL(CPLGetExtension(osSAFE), "SAFE") )
+            osSAFE += ".SAFE";
+        osFilename = osFilename + "/" + osSAFE + "/MTD_MSIL2A.xml";
         if( strncmp(osFilename, "/vsizip/", strlen("/vsizip/")) != 0 )
             osFilename = "/vsizip/" + osFilename;
         CPLDebug("SENTINEL2", "Trying %s", osFilename.c_str());
@@ -2156,6 +2177,96 @@ static bool SENTINEL2GetGranuleList_L1CSafeCompact(CPLXMLNode* psMainMTD,
 }
 
 /************************************************************************/
+/*                 SENTINEL2GetGranuleList_L2ASafeCompact()             */
+/************************************************************************/
+
+static bool SENTINEL2GetGranuleList_L2ASafeCompact(CPLXMLNode* psMainMTD,
+                                    const char* pszFilename,
+                                    const char* pszNodePath,
+                                    std::vector<L1CSafeCompatGranuleDescription>& osList)
+{
+    CPLXMLNode* psProductInfo = CPLGetXMLNode(psMainMTD,
+                                pszNodePath);
+    if( psProductInfo == nullptr )
+    {
+        CPLError(CE_Failure, CPLE_AppDefined, "Cannot find %s",
+                        pszNodePath);
+        return false;
+    }
+
+    CPLXMLNode* psProductOrganisation =
+                        CPLGetXMLNode(psProductInfo, "Product_Organisation");
+    if( psProductOrganisation == nullptr )
+    {
+        psProductOrganisation =
+                        CPLGetXMLNode(psProductInfo, "L2A_Product_Organisation");
+        if( psProductOrganisation == nullptr )
+        {
+            CPLError(CE_Failure, CPLE_AppDefined, "Cannot find %s", "Product_Organisation");
+            return false;
+        }
+    }
+
+    CPLString osDirname( CPLGetDirname(pszFilename) );
+#ifdef HAVE_READLINK
+    char szPointerFilename[2048];
+    int nBytes = static_cast<int>(readlink(pszFilename, szPointerFilename,
+                                           sizeof(szPointerFilename)));
+    if (nBytes != -1)
+    {
+        const int nOffset =
+            std::min(nBytes, static_cast<int>(sizeof(szPointerFilename)-1));
+        szPointerFilename[nOffset] = '\0';
+        osDirname = CPLGetDirname(szPointerFilename);
+    }
+#endif
+
+    const char chSeparator = SENTINEL2GetPathSeparator(osDirname);
+    for(CPLXMLNode* psIter = psProductOrganisation->psChild; psIter != nullptr;
+                                                    psIter = psIter->psNext )
+    {
+        if( psIter->eType != CXT_Element ||
+            !EQUAL(psIter->pszValue, "Granule_List") )
+        {
+            continue;
+        }
+        for(CPLXMLNode* psIter2 = psIter->psChild; psIter2 != nullptr;
+                                                     psIter2 = psIter2->psNext )
+        {
+            if( psIter2->eType != CXT_Element ||
+                !EQUAL(psIter2->pszValue, "Granule") )
+            {
+                continue;
+            }
+
+            const char* pszImageFile = CPLGetXMLValue(psIter2, "IMAGE_FILE", nullptr);
+            if( pszImageFile == nullptr )
+            {
+                pszImageFile = CPLGetXMLValue(psIter2, "IMAGE_FILE_2A", nullptr);
+                if( pszImageFile == nullptr || strlen(pszImageFile) < 3 )
+                {
+                    CPLDebug("SENTINEL2", "Missing IMAGE_FILE element");
+                    continue;
+                }
+            }
+            L1CSafeCompatGranuleDescription oDesc;
+            oDesc.osBandPrefixPath = osDirname + chSeparator + pszImageFile;
+            oDesc.osBandPrefixPath.resize( oDesc.osBandPrefixPath.size() - 36 );
+            // GRANULE/L1C_T30TXT_A007999_20170102T111441/IMG_DATA/T30TXT_20170102T111442_B12_60m -->
+            // GRANULE/L1C_T30TXT_A007999_20170102T111441/MTD_TL.xml
+            oDesc.osMTDTLPath = osDirname + chSeparator +
+                                CPLGetDirname(CPLGetDirname(pszImageFile));
+            oDesc.osMTDTLPath.resize( oDesc.osMTDTLPath.size() - 9 );
+            oDesc.osMTDTLPath = oDesc.osMTDTLPath +
+                                chSeparator + "MTD_TL.xml";
+            osList.push_back(oDesc);
+        }
+    }
+
+    return true;
+}
+
+/************************************************************************/
 /*                           OpenL1C_L2A()                              */
 /************************************************************************/
 
@@ -2177,15 +2288,21 @@ GDALDataset *SENTINEL2Dataset::OpenL1C_L2A( const char* pszFilename,
 
     const char* pszNodePath = (eLevel == SENTINEL2_L1C ) ?
                 "=Level-1C_User_Product.General_Info.Product_Info" :
-                "=Level-2A_User_Product.General_Info.L2A_Product_Info";
+                "=Level-2A_User_Product.General_Info.Product_Info";
     CPLXMLNode* psProductInfo = CPLGetXMLNode(psRoot, pszNodePath);
+    if( psProductInfo == nullptr &&
+        EQUAL(pszNodePath, "=Level-2A_User_Product.General_Info.Product_Info"))
+    {
+        pszNodePath = "=Level-2A_User_Product.General_Info.L2A_Product_Info";
+        psProductInfo = CPLGetXMLNode(psRoot, pszNodePath);
+    }
     if( psProductInfo == nullptr )
     {
         CPLError(CE_Failure, CPLE_AppDefined, "Cannot find %s", pszNodePath);
         return nullptr;
     }
 
-    const bool bIsSafeCompact = eLevel == SENTINEL2_L1C &&
+    const bool bIsSafeCompact =
         EQUAL(CPLGetXMLValue(psProductInfo, "Query_Options.PRODUCT_FORMAT", ""),
               "SAFE_COMPACT");
 
@@ -2215,7 +2332,15 @@ GDALDataset *SENTINEL2Dataset::OpenL1C_L2A( const char* pszFilename,
     if( bIsSafeCompact )
     {
         std::vector<L1CSafeCompatGranuleDescription> aoL1CSafeCompactGranuleList;
-        if( !SENTINEL2GetGranuleList_L1CSafeCompact(psRoot, pszFilename,
+        if( eLevel == SENTINEL2_L1C &&
+            !SENTINEL2GetGranuleList_L1CSafeCompact(psRoot, pszFilename,
+                                                    aoL1CSafeCompactGranuleList) )
+        {
+            return nullptr;
+        }
+        else if ( eLevel == SENTINEL2_L2A &&
+            !SENTINEL2GetGranuleList_L2ASafeCompact(psRoot, pszFilename,
+                                                    pszNodePath,
                                                     aoL1CSafeCompactGranuleList) )
         {
             return nullptr;
