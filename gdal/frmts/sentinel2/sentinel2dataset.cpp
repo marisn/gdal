@@ -26,6 +26,7 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  ****************************************************************************/
+// ERROR 1: Cannot read /vsizip/run/media/maris/Nartiss_Terabyte/soft/S2_sample/S2B_MSIL2A_20180823T094029_N0208_R036_T34VFJ_20180823T122014.zip/S2B_MSIL2A_20180823T094029_N0208_R036_T34VFJ_20180823T122014.SAFE/GRANULE/S2B_OPER_MSI_L2A_TL_MPS__20180823T122014_A007641_T34VFJ_N02.08/S2B_OPER_MTD_L2A_TL_MPS__20180823T122014_A007641_T34VFJ.xml
 
 #include "cpl_minixml.h"
 #include "cpl_string.h"
@@ -603,6 +604,7 @@ static bool SENTINEL2GetGranuleInfo(SENTINEL2Level eLevel,
     static bool bTryOptimization = true;
     CPLXMLNode *psRoot = nullptr;
 
+    printf("bTryOptimization: %d\n", bTryOptimization);
     if( bTryOptimization )
     {
         /* Small optimization: in practice the interesting info are in the */
@@ -755,6 +757,7 @@ static bool SENTINEL2GetGranuleInfo(SENTINEL2Level eLevel,
                 *pdfULY = CPLAtof(pszULY);
         }
     }
+    printf("Return true\n");
 
     return true;
 }
@@ -797,19 +800,29 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
         CPLError(CE_Failure, CPLE_AppDefined, "Cannot find =%s", pszNodePath);
         return false;
     }
-    pszNodePath = (eLevel == SENTINEL2_L2A) ?
-            "General_Info.L2A_Product_Info" : "General_Info.Product_Info";
+    pszNodePath = "General_Info.Product_Info";
     CPLXMLNode* psProductInfo = CPLGetXMLNode(psRoot, pszNodePath);
+    if( psProductInfo == nullptr && eLevel == SENTINEL2_L2A )
+    {
+        pszNodePath = "General_Info.L2A_Product_Info";
+        psProductInfo = CPLGetXMLNode(psRoot, pszNodePath);
+    }
     if( psProductInfo == nullptr )
     {
         CPLError(CE_Failure, CPLE_AppDefined, "Cannot find %s", pszNodePath);
         return false;
     }
+    printf("pszNodePath: %s\n", pszNodePath);
 
-    pszNodePath = (eLevel == SENTINEL2_L2A) ?
-            "L2A_Product_Organisation" : "Product_Organisation";
+    pszNodePath = "Product_Organisation";
     CPLXMLNode* psProductOrganisation =
                         CPLGetXMLNode(psProductInfo, pszNodePath);
+    if( psProductOrganisation == nullptr && eLevel == SENTINEL2_L2A )
+    {
+        pszNodePath = "L2A_Product_Organisation";
+        psProductOrganisation =
+                        CPLGetXMLNode(psProductInfo, pszNodePath);
+    }
     if( psProductOrganisation == nullptr )
     {
         CPLError(CE_Failure, CPLE_AppDefined, "Cannot find %s", pszNodePath);
@@ -834,6 +847,7 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
     for(CPLXMLNode* psIter = psProductOrganisation->psChild; psIter != nullptr;
                                                     psIter = psIter->psNext )
     {
+        printf("psIter->pszValue:%s\n", psIter->pszValue);
         if( psIter->eType != CXT_Element ||
             !EQUAL(psIter->pszValue, "Granule_List") )
         {
@@ -842,12 +856,19 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
         for(CPLXMLNode* psIter2 = psIter->psChild; psIter2 != nullptr;
                                                      psIter2 = psIter2->psNext )
         {
+            printf("psIter2->pszValue:'%s'\n", psIter2->pszValue);
+//pszNodePath: General_Info.Product_Info
+//psIter->pszValue:Granule_List
+//psIter2->pszValue:Granule
             if( psIter2->eType != CXT_Element ||
-                !EQUAL(psIter2->pszValue, "Granules") )
+                (!EQUAL(psIter2->pszValue, "Granule") &&
+                 !EQUAL(psIter2->pszValue, "Granules")) )
             {
+                printf("continue\n");
                 continue;
             }
             const char* pszGranuleId = CPLGetXMLValue(psIter2, "granuleIdentifier", nullptr);
+            printf("pszGranuleId:%s\n", pszGranuleId);
             if( pszGranuleId == nullptr )
             {
                 CPLDebug("SENTINEL2", "Missing granuleIdentifier attribute");
@@ -859,13 +880,22 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
                 for(CPLXMLNode* psIter3 = psIter2->psChild; psIter3 != nullptr;
                                                      psIter3 = psIter3->psNext )
                 {
+                    // FIXME: there is no IMAGE_ID_2A!
+                    printf("psIter3->pszValue:%s\n", psIter3->pszValue);
                     if( psIter3->eType != CXT_Element ||
-                        !EQUAL(psIter3->pszValue, "IMAGE_ID_2A") )
+                        ( !EQUAL(psIter3->pszValue, "IMAGE_ID_2A") &&
+                          !EQUAL(psIter3->pszValue, "IMAGE_FILE") &&
+                          !EQUAL(psIter3->pszValue, "IMAGE_FILE_2A") ) )
                     {
                         continue;
                     }
                     const char* pszTileName = CPLGetXMLValue(psIter3, nullptr, "");
+                    printf("pszTileName: %s\n", pszTileName);
+//psIter3->pszValue:IMAGE_FILE
+//pszTileName: GRANULE/L2A_T34VFJ_A007641_20180823T094320/IMG_DATA/R60m/T34VFJ_20180823T094029_SCL_60m
+//osGranuleMTD:S2B_OPER_MSI_L2A_TL_MPS__20180823T122014_A007641_T34VFJ_N02.08
                     size_t nLen = strlen(pszTileName);
+                    // If granule name ends with resolution: _60m
                     if( nLen > 4 && pszTileName[nLen-4] == '_' &&
                         pszTileName[nLen-1] == 'm' )
                     {
@@ -881,6 +911,7 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
                                 (*poMapResolutionsToBands)[nResolution].
                                     insert(CPLString(pszTileName).substr(nLen-2,2));
                             }
+                            // 
                             else if ( nLen > strlen("S2A_USER_MSI_") &&
                                       pszTileName[8] == '_' &&
                                       pszTileName[12] == '_' &&
@@ -902,7 +933,9 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
 
             /* S2A_OPER_MSI_L1C_TL_SGS__20151024T023555_A001758_T53JLJ_N01.04 --> */
             /* S2A_OPER_MTD_L1C_TL_SGS__20151024T023555_A001758_T53JLJ */
+            // S2B_OPER_MSI_L2A_TL_MPS__20180823T122014_A007641_T34VFJ_N02.08
             CPLString osGranuleMTD = pszGranuleId;
+            printf("osGranuleMTD:%s\n",osGranuleMTD.c_str());
             if( osGranuleMTD.size() > strlen("S2A_OPER_MSI_") &&
                 osGranuleMTD[8] == '_' && osGranuleMTD[12] == '_' &&
                 osGranuleMTD[osGranuleMTD.size()-7] == '_' &&
@@ -929,6 +962,7 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
             osGranuleMTDPath += chSeparator;
             osGranuleMTDPath += osGranuleMTD;
             osList.push_back(osGranuleMTDPath);
+            printf("osList.push:%s\n", osGranuleMTDPath.c_str());
         }
     }
 
@@ -952,9 +986,19 @@ char** SENTINEL2GetUserProductMetadata( CPLXMLNode* psMainMTD,
         CPLError(CE_Failure, CPLE_AppDefined, "Cannot find =%s", pszRootNode);
         return nullptr;
     }
-    CPLXMLNode* psProductInfo = CPLGetXMLNode(psRoot,
-        EQUAL(pszRootNode, "Level-2A_User_Product") ?
-            "General_Info.L2A_Product_Info" : "General_Info.Product_Info");
+    const char* psPIPath = "General_Info.Product_Info";
+    CPLXMLNode* psProductInfo = CPLGetXMLNode(psRoot, psPIPath);
+    if( psProductInfo == nullptr &&
+        EQUAL(pszRootNode, "Level-2A_User_Product"))
+    {
+        psPIPath = "General_Info.L2A_Product_Info";
+        psProductInfo = CPLGetXMLNode(psRoot, psPIPath);
+    }
+    if( psProductInfo == nullptr )
+    {
+        CPLError(CE_Failure, CPLE_AppDefined, "Cannot find =%s", psPIPath);
+        return nullptr;
+    }
     int nDataTakeCounter = 1;
     for( CPLXMLNode* psIter = (psProductInfo ? psProductInfo->psChild : nullptr);
                      psIter != nullptr;
@@ -989,10 +1033,13 @@ char** SENTINEL2GetUserProductMetadata( CPLXMLNode* psMainMTD,
         }
     }
 
-    CPLXMLNode* psIC = CPLGetXMLNode(psRoot,
-            EQUAL(pszRootNode, "Level-2A_User_Product") ?
-                "General_Info.L2A_Product_Image_Characteristics" :
-                "General_Info.Product_Image_Characteristics");
+    const char* psICPath = "General_Info.Product_Image_Characteristics";
+    CPLXMLNode* psIC = CPLGetXMLNode(psRoot, psICPath);
+    if( psIC == nullptr )
+    {
+        psICPath = "General_Info.L2A_Product_Image_Characteristics";
+        psIC = CPLGetXMLNode(psRoot, psICPath);
+    }
     if( psIC != nullptr )
     {
         for( CPLXMLNode* psIter = psIC->psChild; psIter != nullptr;
@@ -1024,6 +1071,10 @@ char** SENTINEL2GetUserProductMetadata( CPLXMLNode* psMainMTD,
 
         // L2A specific
         CPLXMLNode* psQVL = CPLGetXMLNode(psIC, "L1C_L2A_Quantification_Values_List");
+        if( psQVL == nullptr )
+        {
+            psQVL = CPLGetXMLNode(psIC, "Quantification_Values_List");
+        }
         for( CPLXMLNode* psIter = psQVL ? psQVL->psChild : nullptr; psIter != nullptr;
                                                  psIter = psIter->psNext )
         {
@@ -1083,6 +1134,10 @@ char** SENTINEL2GetUserProductMetadata( CPLXMLNode* psMainMTD,
     }
 
     CPLXMLNode* psL2A_QII = CPLGetXMLNode(psRoot, "L2A_Quality_Indicators_Info");
+    if( psL2A_QII == nullptr )
+    {
+        psL2A_QII = CPLGetXMLNode(psRoot, "Quality_Indicators_Info");
+    }
     if( psL2A_QII != nullptr )
     {
         CPLXMLNode* psICCQI = CPLGetXMLNode(psL2A_QII, "Image_Content_QI");
@@ -2290,8 +2345,7 @@ GDALDataset *SENTINEL2Dataset::OpenL1C_L2A( const char* pszFilename,
                 "=Level-1C_User_Product.General_Info.Product_Info" :
                 "=Level-2A_User_Product.General_Info.Product_Info";
     CPLXMLNode* psProductInfo = CPLGetXMLNode(psRoot, pszNodePath);
-    if( psProductInfo == nullptr &&
-        EQUAL(pszNodePath, "=Level-2A_User_Product.General_Info.Product_Info"))
+    if( psProductInfo == nullptr && eLevel == SENTINEL2_L2A )
     {
         pszNodePath = "=Level-2A_User_Product.General_Info.L2A_Product_Info";
         psProductInfo = CPLGetXMLNode(psRoot, pszNodePath);
@@ -2888,10 +2942,9 @@ GDALDataset *SENTINEL2Dataset::OpenL1C_L2ASubdataset( GDALOpenInfo * poOpenInfo,
     SENTINEL2_CPLXMLNodeHolder oXMLHolder(psRoot);
     CPLStripXMLNamespace(psRoot, nullptr, TRUE);
 
-    const bool bIsSafeCompact = eLevel == SENTINEL2_L1C &&
-        EQUAL(CPLGetXMLValue(psRoot,
-                "=Level-1C_User_Product.General_Info.Product_Info.Query_Options.PRODUCT_FORMAT", ""),
-              "SAFE_COMPACT");
+    const bool bIsSafeCompact = EQUAL(CPLGetXMLValue(psRoot,
+            "=Level-1C_User_Product.General_Info.Product_Info.Query_Options.PRODUCT_FORMAT", ""),
+            "SAFE_COMPACT");
 
     std::vector<CPLString> aosGranuleList;
     std::map<int, std::set<CPLString> > oMapResolutionsToBands;
@@ -3207,6 +3260,8 @@ SENTINEL2Dataset* SENTINEL2Dataset::CreateL1CL2ADataset(
                    aoL1CSafeCompactGranuleList.size() );
     }
 
+    // FIXME: size == 0!!!
+    printf("aosGranuleList.size:%ld\n", aosGranuleList.size());
     for(size_t i=0;i<aosGranuleList.size();i++)
     {
         int nEPSGCode = 0;
