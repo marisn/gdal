@@ -187,7 +187,7 @@ class SENTINEL2Dataset : public VRTDataset
                 const std::vector<CPLString>& aosBands,
                 int nSaturatedVal,
                 int nNodataVal,
-                const CPLString pszProductURI);
+                const CPLString& osProductURI);
 
     public:
                     SENTINEL2Dataset(int nXSize, int nYSize);
@@ -848,9 +848,7 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
 #endif
 
     const bool isMSI2Ap = EQUAL(CPLGetXMLValue(psProductInfo, "PRODUCT_TYPE", ""),
-                                "S2MSI2Ap") ?
-                          true :
-                          false;
+                                "S2MSI2Ap");
     CPLString oGranuleId("L2A_");
     std::set<CPLString> aoSetGranuleId;
     for(CPLXMLNode* psIter = psProductOrganisation->psChild; psIter != nullptr;
@@ -952,6 +950,11 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
                 if( pszProductURI != nullptr )
                 {
                     CPLString vProductURI(pszProductURI);
+                    if( vProductURI.size() < 60 )
+                    {
+                        CPLDebug("SENTINEL2", "Invalid PRODUCT_URI_2A");
+                        continue;
+                    }
                     oGranuleId += vProductURI.substr(38, 7);
                     oGranuleId += CPLString(pszGranuleId).substr(41, 8).c_str();
                     oGranuleId += vProductURI.substr(45, 15);
@@ -1473,7 +1476,7 @@ char** SENTINEL2GetL1BGranuleMetadata( CPLXMLNode* psMainMTD )
 static CPLString SENTINEL2GetTilename(const CPLString& osGranulePath,
                                       const CPLString& osGranuleName,
                                       const CPLString& osBandName,
-                                      const CPLString& pszProductURI = CPLString(),
+                                      const CPLString& osProductURI = CPLString(),
                                       bool bIsPreview = false,
                                       int nPrecisionL2A = 0)
 {
@@ -1549,11 +1552,11 @@ static CPLString SENTINEL2GetTilename(const CPLString& osGranulePath,
                 osJPEG2000Name[11] = osBandName[2];
             }
         }
-        else if( pszProductURI.size() > 11 &&
-                 pszProductURI.substr(3, 8) == "_MSIL2A_" )
+        else if( osProductURI.size() > 44 &&
+                 osProductURI.substr(3, 8) == "_MSIL2A_" )
         {
-            osTile += pszProductURI.substr(38, 6);
-            osTile += pszProductURI.substr(10, 16);
+            osTile += osProductURI.substr(38, 6);
+            osTile += osProductURI.substr(10, 16);
             granuleNameMatchTilename = false;
         }
         else
@@ -2331,11 +2334,21 @@ static bool SENTINEL2GetGranuleList_L2ASafeCompact(CPLXMLNode* psMainMTD,
             }
             L1CSafeCompatGranuleDescription oDesc;
             oDesc.osBandPrefixPath = osDirname + chSeparator + pszImageFile;
+            if( oDesc.osBandPrefixPath.size() < 36 )
+            {
+                CPLDebug("SENTINEL2", "Band prefix path too short");
+                continue;
+            }
             oDesc.osBandPrefixPath.resize( oDesc.osBandPrefixPath.size() - 36 );
             // GRANULE/L1C_T30TXT_A007999_20170102T111441/IMG_DATA/T30TXT_20170102T111442_B12_60m -->
             // GRANULE/L1C_T30TXT_A007999_20170102T111441/MTD_TL.xml
             oDesc.osMTDTLPath = osDirname + chSeparator +
                                 CPLGetDirname(CPLGetDirname(pszImageFile));
+            if( oDesc.osMTDTLPath.size() < 9 )
+            {
+                CPLDebug("SENTINEL2", "MTDTL path too short");
+                continue;
+            }
             oDesc.osMTDTLPath.resize( oDesc.osMTDTLPath.size() - 9 );
             oDesc.osMTDTLPath = oDesc.osMTDTLPath +
                                 chSeparator + "MTD_TL.xml";
@@ -3311,7 +3324,7 @@ SENTINEL2Dataset* SENTINEL2Dataset::CreateL1CL2ADataset(
                 const std::vector<CPLString>& aosBands,
                 int nSaturatedVal,
                 int nNodataVal,
-                const CPLString pszProductURI)
+                const CPLString& osProductURI)
 {
 
     /* Iterate over granule metadata to know the layer extent */
@@ -3483,14 +3496,14 @@ SENTINEL2Dataset* SENTINEL2Dataset::CreateL1CL2ADataset(
                         oGranuleInfo.osPath,
                         CPLGetFilename(oGranuleInfo.osPath),
                         osBandName,
-                        pszProductURI,
+                        osProductURI,
                         bIsPreview,
                         (eLevel == SENTINEL2_L1C) ? 0 : nSubDSPrecision);
-                if( pType == MSI2Ap )
+                if( pType == MSI2Ap && osTile.size() >= 34 )
                 {
                     osTile.insert(osTile.size() - 34, "L2A_");
                 }
-                if( bIsTCI )
+                if( bIsTCI && osTile.size() >= 14 )
                 {
                     osTile.replace(osTile.size() - 11, 3, "TCI");
                 }
