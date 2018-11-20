@@ -973,15 +973,15 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
                 const char* pszProductURI = CPLGetXMLValue(psProductInfo, "PRODUCT_URI_2A", nullptr);
                 if( pszProductURI != nullptr )
                 {
-                    CPLString vProductURI(pszProductURI);
-                    if( vProductURI.size() < 60 )
+                    CPLString psProductURI(pszProductURI);
+                    if( psProductURI.size() < 60 )
                     {
                         CPLDebug("SENTINEL2", "Invalid PRODUCT_URI_2A");
                         continue;
                     }
-                    oGranuleId += vProductURI.substr(38, 7);
+                    oGranuleId += psProductURI.substr(38, 7);
                     oGranuleId += CPLString(pszGranuleId).substr(41, 8).c_str();
-                    oGranuleId += vProductURI.substr(45, 15);
+                    oGranuleId += psProductURI.substr(45, 15);
                     pszGranuleId = oGranuleId.c_str();
                 }
             }
