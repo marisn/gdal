@@ -928,7 +928,6 @@ static bool SENTINEL2GetGranuleList(CPLXMLNode* psMainMTD,
                                 (*poMapResolutionsToBands)[nResolution].
                                     insert(CPLString(pszTileName).substr(nLen-2,2));
                             }
-                            // 
                             else if ( nLen > strlen("S2A_USER_MSI_") &&
                                       pszTileName[8] == '_' &&
                                       pszTileName[12] == '_' &&
@@ -1138,8 +1137,7 @@ char** SENTINEL2GetUserProductMetadata( CPLXMLNode* psMainMTD,
         }
     }
 
-    const char* psQIIPath = "Quality_Indicators_Info";
-    CPLXMLNode* psQII = CPLGetXMLNode(psRoot, psQIIPath);
+    CPLXMLNode* psQII = CPLGetXMLNode(psRoot, "Quality_Indicators_Info");
     if( psQII != nullptr )
     {
         const char* pszCC = CPLGetXMLValue(psQII, "Cloud_Coverage_Assessment", nullptr);
